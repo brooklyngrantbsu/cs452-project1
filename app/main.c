@@ -35,8 +35,15 @@ int main(int argc, char **argv)
 
   char *line;
   using_history();
+  
+  // get prompt, it will be what shows up before typing
+  char *prompt = getenv("MY_PROMPT"); // check if env variable exists
+  
+  if (prompt == NULL) {
+      prompt = "$"; // default if null
+  }
 
-  while ((line=readline("$"))){
+  while ((line=readline(prompt))){
       printf("%s\n",line);
       add_history(line);
       free(line);
