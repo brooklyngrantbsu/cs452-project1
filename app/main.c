@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "../src/lab.h"
+#include <readline/readline.h>
+#include <readline/history.h>
 
 
 int main(int argc, char **argv)
@@ -10,7 +12,7 @@ int main(int argc, char **argv)
 
   int c;
 
-  while ((c = getopt(argc, argv, "v")) != -1)
+  while ((c = getopt(argc, argv, "v")) != -1) {
     switch (c)
     {
       case 'v': 
@@ -27,9 +29,18 @@ int main(int argc, char **argv)
         break;
 
       default:
-        abort();
         break;
     }
+  }
+
+  char *line;
+  using_history();
+
+  while ((line=readline("$"))){
+      printf("%s\n",line);
+      add_history(line);
+      free(line);
+  }
 
   return 0;
 }
