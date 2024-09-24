@@ -7,7 +7,29 @@
 #include <readline/history.h>
 #include <pwd.h>
 #include <sys/types.h>
-#include <string.h>
+#include <sys/wait.h>
+
+// runs command with args
+void runCommand(char **args) {
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("Fork failed");
+        return;
+    }
+
+    if (pid == 0) {
+        // child
+        if (execvp(args[0], args) == -1) {
+            perror("Exec failed");
+        }
+        exit(EXIT_FAILURE);
+    } else {
+        // parent
+        int status;
+        waitpid(pid, &status, 0); //wait for chlid then run
+    }
+}
 
 // Function to change directory
 void change_directory(char *path) {
@@ -77,6 +99,10 @@ int main(int argc, char **argv)
         break;
     }
   }
+  
+  long arg_max = sysconf(_SC_ARG_MAX); // system max arg amount
+
+  char *args[arg_max / sizeof(char *)];
 
   char *line;
   using_history();
@@ -92,14 +118,19 @@ int main(int argc, char **argv)
     if (*line) {
       add_history(line);
 
-      char *args[3];  // max 3 args
       int i = 0;
       char *token = strtok(line, " ");
-      while (token != NULL && i < 2) {
+      while (token != NULL && i < arg_max / sizeof(char *)) {
           args[i++] = token;
           token = strtok(NULL, " ");
       }
       args[i] = NULL;
+
+      // if empty, leave be and continue
+      if (i == 0) {
+          free(line);
+          continue;
+      }
 
       if (strcmp(args[0], "exit") == 0) {
         exit(0);  // exit with status 0
@@ -111,12 +142,9 @@ int main(int argc, char **argv)
           print_history();  // print the cmd history
           free(line);
           continue; 
-      } else {
-          fprintf(stderr, "Not a valid command.\n");
-          free(line);
-          continue; 
       }
-
+      
+      runCommand(args);
     }
 
     free(line);
