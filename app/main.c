@@ -8,26 +8,51 @@
 #include <pwd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <termios.h>
+
+// global vars
+struct termios shell_tmodes;
+pid_t shell_pgid;
+int shell_terminal;
 
 // runs command with args
 void runCommand(char **args) {
     pid_t pid = fork();
 
     if (pid < 0) {
-        perror("Fork failed");
+        fprintf(stderr, "Fork failed");
         return;
     }
 
     if (pid == 0) {
         // child
-        if (execvp(args[0], args) == -1) {
-            perror("Exec failed");
+        pid_t child = getpid();
+        setpgid(child, child);
+        tcsetpgrp(shell_terminal,child);
+        signal (SIGINT, SIG_DFL);
+        signal (SIGQUIT, SIG_DFL);
+        signal (SIGTSTP, SIG_DFL);
+        signal (SIGTTIN, SIG_DFL);
+        signal (SIGTTOU, SIG_DFL);
+        int ret = execvp(args[0], args);
+
+        if (ret == -1) {
+            fprintf(stderr, "Exec failed\n");
         }
         exit(EXIT_FAILURE);
     } else {
         // parent
+        setpgid(pid, pid);  // put child in own process group
+        tcsetpgrp(shell_terminal, pid);  // give child terminal control
+
         int status;
-        waitpid(pid, &status, 0); //wait for chlid then run
+        waitpid(pid, &status, WUNTRACED); //wait for chlid then run
+
+        // Give terminal control to shell again
+        tcsetpgrp(shell_terminal, shell_pgid);
+        tcgetattr(shell_terminal, &shell_tmodes);
+        tcsetattr(shell_terminal, TCSADRAIN, &shell_tmodes);
     }
 }
 
@@ -76,6 +101,39 @@ void print_history() {
 
 int main(int argc, char **argv)
 {
+  signal(SIGINT, SIG_IGN); // Ctrl+C ignore
+  signal(SIGQUIT, SIG_IGN); // ctrl+\ ignore
+  signal(SIGTSTP, SIG_IGN); // ctrl+Z ignore
+  signal(SIGTTIN, SIG_IGN);
+  signal(SIGTTOU, SIG_IGN);
+
+  shell_terminal = STDIN_FILENO;
+
+  if (isatty(shell_terminal)) {
+    // Ensure the shell is in the foreground
+    while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp())) {
+        kill(-shell_pgid, SIGTTIN);  // Stop the shell until it's in the foreground
+    }
+
+    signal(SIGINT, SIG_IGN); // Ctrl+C ignore
+    signal(SIGQUIT, SIG_IGN); // ctrl+\ ignore
+    signal(SIGTSTP, SIG_IGN); // ctrl+Z ignore
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+
+    // Set the shell process group
+    shell_pgid = getpid();
+    if (setpgid(shell_pgid, shell_pgid) < 0) {
+        perror("Couldn't put the shell in its own process group");
+        exit(1);
+    }
+
+    // Take control of the terminal
+    tcsetpgrp(shell_terminal, shell_pgid);
+
+    // Save the terminal attributes
+    tcgetattr(shell_terminal, &shell_tmodes);
+}
 
   int c;
 
