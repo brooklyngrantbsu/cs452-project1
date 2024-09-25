@@ -11,50 +11,23 @@
 #include <signal.h>
 #include <termios.h>
 
+
+// objects (structs for c)
+typedef struct {
+    int id;
+    pid_t pid;
+    char command[300]; // command typed
+} Job;
+
 // global vars
 struct termios shell_tmodes;
 pid_t shell_pgid;
 int shell_terminal;
 
-// runs command with args
-void runCommand(char **args) {
-    pid_t pid = fork();
+#define MAX_JOBS 100 // 100 is the max jobs for now
+Job jobList[MAX_JOBS];
+int jobCount = 0;
 
-    if (pid < 0) {
-        fprintf(stderr, "Fork failed");
-        return;
-    }
-
-    if (pid == 0) {
-        // child
-        pid_t child = getpid();
-        setpgid(child, child);
-        tcsetpgrp(shell_terminal,child);
-        signal (SIGINT, SIG_DFL);
-        signal (SIGQUIT, SIG_DFL);
-        signal (SIGTSTP, SIG_DFL);
-        signal (SIGTTIN, SIG_DFL);
-        signal (SIGTTOU, SIG_DFL);
-        int ret = execvp(args[0], args);
-
-        if (ret == -1) {
-            fprintf(stderr, "Exec failed\n");
-        }
-        exit(EXIT_FAILURE);
-    } else {
-        // parent
-        setpgid(pid, pid);  // put child in own process group
-        tcsetpgrp(shell_terminal, pid);  // give child terminal control
-
-        int status;
-        waitpid(pid, &status, WUNTRACED); //wait for chlid then run
-
-        // Give terminal control to shell again
-        tcsetpgrp(shell_terminal, shell_pgid);
-        tcgetattr(shell_terminal, &shell_tmodes);
-        tcsetattr(shell_terminal, TCSADRAIN, &shell_tmodes);
-    }
-}
 
 // Function to change directory
 void change_directory(char *path) {
@@ -99,41 +72,119 @@ void print_history() {
     }
 }
 
-int main(int argc, char **argv)
-{
-  signal(SIGINT, SIG_IGN); // Ctrl+C ignore
-  signal(SIGQUIT, SIG_IGN); // ctrl+\ ignore
-  signal(SIGTSTP, SIG_IGN); // ctrl+Z ignore
-  signal(SIGTTIN, SIG_IGN);
-  signal(SIGTTOU, SIG_IGN);
 
-  shell_terminal = STDIN_FILENO;
 
-  if (isatty(shell_terminal)) {
-    // Ensure the shell is in the foreground
-    while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp())) {
-        kill(-shell_pgid, SIGTTIN);  // Stop the shell until it's in the foreground
+/*
+Job handling start-----------------------------------------
+*/
+
+// Function to add a job to the list
+void addJob(pid_t pid, char *command) {
+    if (jobCount < MAX_JOBS) {
+        jobList[jobCount].id = jobCount + 1;
+        jobList[jobCount].pid = pid;
+
+        snprintf(jobList[jobCount].command, sizeof(jobList[jobCount].command), "%s", command);
+        printf("[%d] %d %s\n", jobList[jobCount].id, pid, command);
+        jobCount++;
+    } else {
+        fprintf(stderr, "Too many jobs\n");
     }
-
-    signal(SIGINT, SIG_IGN); // Ctrl+C ignore
-    signal(SIGQUIT, SIG_IGN); // ctrl+\ ignore
-    signal(SIGTSTP, SIG_IGN); // ctrl+Z ignore
-    signal(SIGTTIN, SIG_IGN);
-    signal(SIGTTOU, SIG_IGN);
-
-    // Set the shell process group
-    shell_pgid = getpid();
-    if (setpgid(shell_pgid, shell_pgid) < 0) {
-        perror("Couldn't put the shell in its own process group");
-        exit(1);
-    }
-
-    // Take control of the terminal
-    tcsetpgrp(shell_terminal, shell_pgid);
-
-    // Save the terminal attributes
-    tcgetattr(shell_terminal, &shell_tmodes);
 }
+
+// Function to remove a job from the list
+void remove_job(pid_t pid) {
+    for (int i = 0; i < jobCount; i++) {
+        if (jobList[i].pid == pid) {
+            // shifting
+            for (int j = i; j < jobCount - 1; j++) {
+                jobList[j] = jobList[j + 1];
+            }
+
+            jobCount--;
+            break;
+        }
+    }
+}
+
+// Function to check for completed background jobs
+void checkForBackgroundJobs() {
+    int status;
+    pid_t pid;
+
+    for (int i = 0; i < jobCount; i++) {
+        pid = waitpid(jobList[i].pid, &status, WNOHANG);
+
+        if (pid > 0) {
+            // Process has finished
+            printf("[%d] Done %s\n", jobList[i].id, jobList[i].command);
+            remove_job(pid);
+
+            i--; // subtract one to make sure the next job isn't skipped after removing
+        }
+    }
+}
+
+
+/*
+Job handling end-----------------------------------------
+*/
+
+
+// Function to runs command with args
+void runCommand(char **args, int bg, char *command) {
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        fprintf(stderr, "Fork failed");
+        return;
+    }
+
+    if (pid == 0) {
+        // child
+        pid_t child = getpid();
+        setpgid(child, child);
+        if (!bg) {
+            tcsetpgrp(shell_terminal, child); // do not give away control
+        }
+        signal (SIGINT, SIG_DFL);
+        signal (SIGQUIT, SIG_DFL);
+        signal (SIGTSTP, SIG_DFL);
+        signal (SIGTTIN, SIG_DFL);
+        signal (SIGTTOU, SIG_DFL);
+        int ret = execvp(args[0], args);
+
+        if (ret == -1) {
+            fprintf(stderr, "Exec failed\n");
+        }
+        exit(EXIT_FAILURE);
+    } else {
+        // parent
+        setpgid(pid, pid);  // put child in own process group
+
+        if (bg) {
+            // if wanted in background, put there
+            addJob(pid, command);
+        } else {
+
+            tcsetpgrp(shell_terminal, pid);  // give child terminal control
+
+            int status;
+            waitpid(pid, &status, WUNTRACED); //wait for chlid then run
+
+            // Give terminal control to shell again
+            tcsetpgrp(shell_terminal, shell_pgid);
+            tcgetattr(shell_terminal, &shell_tmodes);
+            tcsetattr(shell_terminal, TCSADRAIN, &shell_tmodes);
+
+        }
+    }
+}
+
+
+int main(int argc, char **argv)
+{   
+    // check if asking for the version
 
   int c;
 
@@ -157,6 +208,36 @@ int main(int argc, char **argv)
         break;
     }
   }
+
+  // if not asking for version and starting terminal, continue here
+
+  signal(SIGINT, SIG_IGN); // Ctrl+C ignore
+  signal(SIGQUIT, SIG_IGN); // ctrl+\ ignore
+  signal(SIGTSTP, SIG_IGN); // ctrl+Z ignore
+  signal(SIGTTIN, SIG_IGN);
+  signal(SIGTTOU, SIG_IGN);
+
+  shell_terminal = STDIN_FILENO;
+
+  if (isatty(shell_terminal)) {
+    // Ensure the shell is in the foreground
+    while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp())) {
+        kill(-shell_pgid, SIGTTIN);  // Stop the shell until it's in the foreground
+    }
+
+    // Set the shell process group
+    shell_pgid = getpid();
+    if (setpgid(shell_pgid, shell_pgid) < 0) {
+        perror("Couldn't put the shell in its own process group");
+        exit(1);
+    }
+
+    // Take control of the terminal
+    tcsetpgrp(shell_terminal, shell_pgid);
+
+    // Save the terminal attributes
+    tcgetattr(shell_terminal, &shell_tmodes);
+  }
   
   long arg_max = sysconf(_SC_ARG_MAX); // system max arg amount
 
@@ -173,8 +254,24 @@ int main(int argc, char **argv)
   }
 
   while ((line=readline(prompt))){
+    checkForBackgroundJobs(); // while here, check real quick if any bg jobs are finished
+
     if (*line) {
       add_history(line);
+
+      int putToBackground = 0;
+      char *command = strdup(line); // command that was typed
+
+      char *ampersand = strrchr(line, '&');
+      if (ampersand) {
+          putToBackground = 1;
+          *ampersand = '\0';  // get rif of &
+          
+          while (isspace((unsigned char) line[strlen(line) - 1])) { // remove spaces before & as well since it doesn't matter
+              line[strlen(line) - 1] = '\0';
+          }
+      }
+
 
       int i = 0;
       char *token = strtok(line, " ");
@@ -202,7 +299,8 @@ int main(int argc, char **argv)
           continue; 
       }
       
-      runCommand(args);
+      runCommand(args, putToBackground, command);
+      free(command);
     }
 
     free(line);
