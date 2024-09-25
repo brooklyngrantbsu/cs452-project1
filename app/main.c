@@ -17,6 +17,7 @@ typedef struct {
     int id;
     pid_t pid;
     char command[300]; // command typed
+    char status[8]; // running or done
 } Job;
 
 // global vars
@@ -27,6 +28,7 @@ int shell_terminal;
 #define MAX_JOBS 100 // 100 is the max jobs for now
 Job jobList[MAX_JOBS];
 int jobCount = 0;
+int nextJobID = 1; // keep track of id to use
 
 
 // Function to change directory
@@ -81,10 +83,12 @@ Job handling start-----------------------------------------
 // Function to add a job to the list
 void addJob(pid_t pid, char *command) {
     if (jobCount < MAX_JOBS) {
-        jobList[jobCount].id = jobCount + 1;
+        jobList[jobCount].id = nextJobID++;
         jobList[jobCount].pid = pid;
 
         snprintf(jobList[jobCount].command, sizeof(jobList[jobCount].command), "%s", command);
+        snprintf(jobList[jobCount].status, sizeof(jobList[jobCount].status), "Running"); // set status to running
+
         printf("[%d] %d %s\n", jobList[jobCount].id, pid, command);
         jobCount++;
     } else {
@@ -93,7 +97,7 @@ void addJob(pid_t pid, char *command) {
 }
 
 // Function to remove a job from the list
-void remove_job(pid_t pid) {
+void removeJob(pid_t pid) {
     for (int i = 0; i < jobCount; i++) {
         if (jobList[i].pid == pid) {
             // shifting
@@ -107,7 +111,7 @@ void remove_job(pid_t pid) {
     }
 }
 
-// Function to check for completed background jobs
+// Function to check for completed background jobs and mark as done if so
 void checkForBackgroundJobs() {
     int status;
     pid_t pid;
@@ -117,14 +121,27 @@ void checkForBackgroundJobs() {
 
         if (pid > 0) {
             // Process has finished
-            printf("[%d] Done %s\n", jobList[i].id, jobList[i].command);
-            remove_job(pid);
-
-            i--; // subtract one to make sure the next job isn't skipped after removing
+            snprintf(jobList[i].status, sizeof(jobList[i].status), "Done");
         }
     }
 }
 
+void printJobs() {
+    for (int i = 0; i < jobCount; i++) {
+        if (strcmp(jobList[i].status, "Done") == 0) {
+            // done
+            printf("[%d] %s\t %s\n", jobList[i].id, jobList[i].status, jobList[i].command);
+
+            // If the job is done, remove it so it is gone from the list
+            removeJob(jobList[i].pid);
+            i--;
+        } else {
+            // running still
+            printf("[%d] %d %s %s\n", jobList[i].id, jobList[i].pid, jobList[i].status, jobList[i].command);
+
+        }
+    }
+}
 
 /*
 Job handling end-----------------------------------------
@@ -297,6 +314,11 @@ int main(int argc, char **argv)
           print_history();  // print the cmd history
           free(line);
           continue; 
+      } else if (strcmp(args[0], "jobs") == 0) {
+          printJobs(); // print all jobs
+          free(line);
+          continue;
+
       }
       
       runCommand(args, putToBackground, command);
