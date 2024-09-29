@@ -120,6 +120,21 @@ extern "C"
    */
   void parse_args(int argc, char **argv);
 
+ /**
+   * @brief Run a command thats not builtin
+   *
+   * @param args arguments
+   * @param bg put in background or not
+   * @param command command to run
+   */
+  void runCommand(struct shell *sh, char **args, int bg, char *command);
+
+ /**
+   * @brief Check for background jobs to report
+   *
+   */
+  void checkForBackgroundJobs();
+
 
 
 #ifdef __cplusplus

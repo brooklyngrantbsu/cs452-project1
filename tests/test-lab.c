@@ -35,6 +35,11 @@ void test_cmd_parse2(void)
      free(expected[0]);
      free(expected[1]);
      free(expected);
+
+     // I did make changes to this test, I was having some 
+     // memory issues, these needed to be freed at the end
+     cmd_free(actual);
+     free(stng);
 }
 
 void test_cmd_parse(void)
